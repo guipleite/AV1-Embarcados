@@ -31,14 +31,14 @@ uint32_t hour, minu, seg;
 
 struct ili9488_opt_t g_ili9488_display_opt;
 
-volatile Bool but_p_freq;
+volatile Bool wheel;
 volatile Bool but_m_freq;
 volatile Bool but_stop;
 
 volatile Bool f_rtt_alarme = false;
 
-void but_p_freq_callback(void){
-	but_p_freq = true;
+void wheel_callback(void){
+	wheel = true;
 }
 void but_m_freq_callback(void){
 	but_m_freq = true;
@@ -85,7 +85,7 @@ void init(){
 					EBUT1_PIO_ID,
 					EBUT1_PIO_IDX_MASK,
 					PIO_IT_FALL_EDGE,
-					but_p_freq_callback);
+					wheel_callback);
 	pio_handler_set(EBUT2_PIO,
 					EBUT2_PIO_ID,
 					EBUT2_PIO_IDX_MASK,
@@ -261,8 +261,8 @@ int main(void){
 		else if(but_stop){
 			but_stop = false;
 		}
-		else if(but_p_freq){
-			but_p_freq=false;
+		else if(wheel){
+			wheel=false;
 		}
 		pmc_sleep(SAM_PM_SMODE_SLEEP_WFI);
 	
