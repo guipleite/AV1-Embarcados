@@ -63,25 +63,6 @@ void init(){
 	pio_pull_up(EBUT2_PIO,EBUT2_PIO_IDX_MASK,PIO_PULLUP);
 	pio_set_input(EBUT3_PIO,EBUT3_PIO_IDX_MASK,PIO_DEFAULT);
 	pio_pull_up(EBUT3_PIO,EBUT3_PIO_IDX_MASK,PIO_PULLUP);
-
-	// Configura interrup??o no pino referente ao botao e associa
-	// fun??o de callback caso uma interrup??o for gerada
-	// a fun??o de callback ? a: but_callback()
-	pio_handler_set(EBUT1_PIO,
-	EBUT1_PIO_ID,
-	EBUT1_PIO_IDX_MASK,
-	PIO_IT_FALL_EDGE,
-	but_p_freq_callback);
-	pio_handler_set(EBUT2_PIO,
-	EBUT2_PIO_ID,
-	EBUT2_PIO_IDX_MASK,
-	PIO_IT_FALL_EDGE,
-	but_m_freq_callback);
-	pio_handler_set(EBUT3_PIO,
-	EBUT3_PIO_ID,
-	EBUT3_PIO_IDX_MASK,
-	PIO_IT_FALL_EDGE,
-	but_stop_callback);
 	
 	// Ativa interrup??o
 	pio_enable_interrupt(EBUT1_PIO, EBUT1_PIO_IDX_MASK);
@@ -97,7 +78,28 @@ void init(){
 	NVIC_EnableIRQ(EBUT3_PIO_ID);
 	NVIC_SetPriority(EBUT3_PIO_ID, 0); // Prioridade 4
 	
+	// Configura interrup??o no pino referente ao botao e associa
+	// fun??o de callback caso uma interrup??o for gerada
+	// a fun??o de callback ? a: but_callback()
+	pio_handler_set(EBUT1_PIO,
+					EBUT1_PIO_ID,
+					EBUT1_PIO_IDX_MASK,
+					PIO_IT_FALL_EDGE,
+					but_p_freq_callback);
+	pio_handler_set(EBUT2_PIO,
+					EBUT2_PIO_ID,
+					EBUT2_PIO_IDX_MASK,
+					PIO_IT_FALL_EDGE,
+					but_m_freq_callback);
+	pio_handler_set(EBUT3_PIO,
+					EBUT3_PIO_ID,
+					EBUT3_PIO_IDX_MASK,
+					PIO_IT_FALL_EDGE,
+					but_stop_callback);
+	
 	WDT->WDT_MR = WDT_MR_WDDIS;
+	
+	
 }
 
 static void configure_lcd(void){
@@ -153,7 +155,6 @@ void RTT_Handler(void)
 
 	/* IRQ due to Alarm */
 	if ((ul_status & RTT_SR_ALMS) == RTT_SR_ALMS) {
-		//pin_toggle(LED_PIO, LED_IDX_MASK);    // BLINK Led
 		f_rtt_alarme = true;                  // flag RTT alarme
 	}
 }
@@ -215,51 +216,39 @@ int main(void){
 	
 	rtc_get_time(RTC, &hour, &minu, &seg);
 	int t_time = seg;
-	int t_dist = seg;
-	int t_vel = seg;
+	
     f_rtt_alarme = true;
+	
+	int n_alarm = 0;
 
 	while (1) {
+		rtc_get_time(RTC, &hour, &minu, &seg);
+		
 		if(f_rtt_alarme){
-			 uint16_t pllPreScale = (int) (((float) 32768) / 1.0);
+			 uint16_t pllPreScale = (int) (((float) 32768) / 4);
 			 uint32_t irqRTTvalue  = 4;
 			 
 			 // reinicia RTT para gerar um novo IRQ
 			 RTT_init(pllPreScale, irqRTTvalue);
 			 f_rtt_alarme = false;
-
-			 clear_LCD(125,170);
-			 sprintf(stingLCD,"Velocidade Media:%d km/h" , calc_Vel(x,4));
-			 ili9488_draw_string(10, 150, stingLCD);
-			 sprintf(stingLCD,"Distancia Percorrida:%d m" , calc_dist(x_tot));
-			 ili9488_draw_string(10, 125, stingLCD);
-			 x=0;
-		}
-		rtc_get_time(RTC, &hour, &minu, &seg);
+			 n_alarm++;
+			 
+			 clear_LCD(250,315);
 		
-		if(seg == (t_time+1)){
-			t_time = seg;
-			if(t_time==59){t_time=0;}
- 			
-			clear_LCD(325,340);
-
-			sprintf(stingLCD, "Tempo Percorrido:%d :%d :%d", hour,minu,seg);
-			ili9488_draw_string(10, 325, stingLCD);
+			 sprintf(stingLCD, "Tempo Percorrido:%d :%d :%d", hour,minu,seg);
+			 ili9488_draw_string(10, 300, stingLCD);
+			 
+			 if(n_alarm%4==0){
+				clear_LCD(125,170);
+				sprintf(stingLCD,"Velocidade Media:%d km/h" , calc_Vel(x,4));
+				ili9488_draw_string(10, 150, stingLCD);
+				sprintf(stingLCD,"Dist. Percorrida:%d m" , calc_dist(x_tot));
+				ili9488_draw_string(5, 125, stingLCD);
+				x=0;
+			 }
 		}
-		
-		if(seg == (t_dist+4)){
-			t_dist,t_vel = seg;
-			if(t_dist>=56){t_dist,t_vel=0;}
 			
-		}
-				
-		if(but_stop){
-			but_stop = false;
-		}
-		else if(but_p_freq){
-			but_p_freq=false;			
-		}
-		else if(but_m_freq){
+		if(but_m_freq){
 			x++;
 			x_tot+=x;
 			clear_LCD(200,230);
@@ -269,8 +258,14 @@ int main(void){
 			
 			but_m_freq = false;
 		}
-		
-		//pmc_sleep(SAM_PM_SMODE_SLEEP_WFI);
+		else if(but_stop){
+			rtc_set_time(RTC, HOUR, MINUTE, SECOND);
+			but_stop = false;
+		}
+		else if(but_p_freq){
+			but_p_freq=false;
+		}
+		pmc_sleep(SAM_PM_SMODE_SLEEP_WFI);
 	
 	}
 	return 0;
