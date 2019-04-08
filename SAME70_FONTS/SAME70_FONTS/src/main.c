@@ -259,7 +259,6 @@ int main(void){
 			but_m_freq = false;
 		}
 		else if(but_stop){
-			rtc_set_time(RTC, HOUR, MINUTE, SECOND);
 			but_stop = false;
 		}
 		else if(but_p_freq){
