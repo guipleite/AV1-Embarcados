@@ -4,6 +4,15 @@
 #include <stdlib.h>
 #include "ioport.h"
 
+#define YEAR        2018
+#define MONTH      3
+#define DAY         19
+#define WEEK        12
+#define HOUR        0
+#define MINUTE      0
+#define SECOND      0
+uint32_t hour, minu, seg;
+
 //butao 1 oled
 #define EBUT1_PIO PIOD //start EXT 9 PD28
 #define EBUT1_PIO_ID 16
@@ -35,8 +44,6 @@ void but_m_freq_callback(void){
 void but_stop_callback(void){
 	but_stop = true;
 }
-
-
 
 void init(){
 	board_init();
@@ -130,6 +137,29 @@ void TC_init(Tc * TC, int ID_TC, int TC_CHANNEL, int freq){
 	/* Inicializa o canal 0 do TC */
 	tc_start(TC, TC_CHANNEL);
 }
+
+void RTC_init(){
+	/* Configura o PMC */
+	pmc_enable_periph_clk(ID_RTC);
+
+	/* Default RTC configuration, 24-hour mode */
+	rtc_set_hour_mode(RTC, 0);
+
+	/* Configura data e hora manualmente */
+	rtc_set_date(RTC, YEAR, MONTH, DAY, WEEK);
+	rtc_set_time(RTC, HOUR, MINUTE, SECOND);
+
+	/* Configure RTC interrupts */
+	NVIC_DisableIRQ(RTC_IRQn);
+	NVIC_ClearPendingIRQ(RTC_IRQn);
+	NVIC_SetPriority(RTC_IRQn, 0);
+	NVIC_EnableIRQ(RTC_IRQn);
+
+	/* Ativa interrupcao via alarme */
+	rtc_enable_interrupt(RTC,  RTC_IER_ALREN);
+
+}
+
 void show_LCD(int x){
 	uint8_t stingLCD[256];
 
@@ -138,6 +168,10 @@ void show_LCD(int x){
 	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
 	sprintf(stingLCD, "soma %d", x);
 	ili9488_draw_string(100, 200, stingLCD);
+}
+volatile int counter=0;
+int TC_counter(){
+	counter++;
 }
 void TC1_Handler(void){
 	volatile uint32_t ul_dummy;
@@ -148,7 +182,7 @@ void TC1_Handler(void){
 	UNUSED(ul_dummy);
 
 	/** Muda o estado do LED */
-	show_LCD(7);
+	TC_counter();
 }
 
 
@@ -161,10 +195,9 @@ int main(void)
 	uint8_t stingLCD[256];
 	
 	/* Initialize the board. */
-	
 	ioport_init();
 	init();
-	
+	RTC_init();
 	/* Initialize the UART console. */
 	//configure_console();
 
@@ -180,7 +213,17 @@ int main(void)
 	ili9488_draw_string(10, 300, stingLCD);
 	int x = 0;
 	while (1) {
-		//C_init(TC0, ID_TC1, 1, 1);
+		delay_s(1);
+		rtc_get_time(RTC, &hour, &minu, &seg);
+		
+		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
+		ili9488_draw_filled_rectangle(0, 300, ILI9488_LCD_WIDTH-1, 315);
+		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
+		
+		sprintf(stingLCD, "Tempo Percorrido: %d : %d :%d", hour,minu,seg);
+		ili9488_draw_string(10, 300, stingLCD);
+		
+		//TC_init(TC0, ID_TC1, 1, 1);
 		
 		if(but_stop){
 			ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
@@ -192,23 +235,23 @@ int main(void)
 		}
 		else if(but_p_freq){
 		
-			//TC_init(TC0, ID_TC1, 1, 0.25);
+			//TC_init(TC0, ID_TC1, 1, 2);
 
 			but_p_freq=false;
 			
 		}
 		else if(but_m_freq){
+			x++;
 			ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
 			ili9488_draw_filled_rectangle(10, 200, ILI9488_LCD_WIDTH-1, 250);
 			ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
-			sprintf(stingLCD, "soma %d", 1234);
+			sprintf(stingLCD, "rotacoes %d", x);
 			ili9488_draw_string(100, 200, stingLCD);
-			but_m_freq=false;
-			
+			but_m_freq = false;
 		}
 		
-		pmc_sleep(SAM_PM_SMODE_SLEEP_WFI);
-		
+		//pmc_sleep(SAM_PM_SMODE_SLEEP_WFI);
+	
 	}
 	return 0;
 }
