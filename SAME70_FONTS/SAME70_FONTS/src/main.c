@@ -35,6 +35,8 @@ volatile Bool but_p_freq;
 volatile Bool but_m_freq;
 volatile Bool but_stop;
 
+volatile Bool f_rtt_alarme = false;
+
 void but_p_freq_callback(void){
 	but_p_freq = true;
 }
@@ -113,31 +115,6 @@ static void configure_lcd(void){
 	ili9488_draw_filled_rectangle(0, 360, ILI9488_LCD_WIDTH-1, 480-1);	
 }
 
-void TC_init(Tc * TC, int ID_TC, int TC_CHANNEL, int freq){
-	uint32_t ul_div;
-	uint32_t ul_tcclks;
-	uint32_t ul_sysclk = sysclk_get_cpu_hz();
-
-	uint32_t channel = 1;
-
-	/* Configura o PMC */
-	
-	pmc_enable_periph_clk(ID_TC);
-
-	/** Configura o TC para operar em  4Mhz e interrup?c?o no RC compare */
-	tc_find_mck_divisor(freq, ul_sysclk, &ul_div, &ul_tcclks, ul_sysclk);
-	tc_init(TC, TC_CHANNEL, ul_tcclks | TC_CMR_CPCTRG);
-	tc_write_rc(TC, TC_CHANNEL, (ul_sysclk / ul_div) / freq);
-
-	/* Configura e ativa interrup?c?o no TC canal 0 */
-	/* Interrup??o no C */
-	NVIC_EnableIRQ((IRQn_Type) ID_TC);
-	tc_enable_interrupt(TC, TC_CHANNEL, TC_IER_CPCS);
-
-	/* Inicializa o canal 0 do TC */
-	tc_start(TC, TC_CHANNEL);
-}
-
 void RTC_init(){
 	/* Configura o PMC */
 	pmc_enable_periph_clk(ID_RTC);
@@ -160,37 +137,65 @@ void RTC_init(){
 
 }
 
-void show_LCD(int x){
-	uint8_t stingLCD[256];
+void pin_toggle(Pio *pio, uint32_t mask);
+void io_init(void);
+static void RTT_init(uint16_t pllPreScale, uint32_t IrqNPulses);
 
-	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
-	ili9488_draw_filled_rectangle(10, 200, ILI9488_LCD_WIDTH-1, 250);
-	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
-	sprintf(stingLCD, "soma %d", x);
-	ili9488_draw_string(100, 200, stingLCD);
-}
-volatile int counter=0;
-int TC_counter(){
-	counter++;
-}
-void TC1_Handler(void){
-	volatile uint32_t ul_dummy;
-
-	ul_dummy = tc_get_status(TC0, 1);
-
-	/* Avoid compiler warning */
-	UNUSED(ul_dummy);
-
-	/** Muda o estado do LED */
-	TC_counter();
-}
-
-
-
-void TC_init(Tc * TC, int ID_TC, int TC_CHANNEL, int freq);
-
-int main(void)
+void RTT_Handler(void)
 {
+	uint32_t ul_status;
+
+	/* Get RTT status */
+	ul_status = rtt_get_status(RTT);
+
+	/* IRQ due to Time has changed */
+	if ((ul_status & RTT_SR_RTTINC) == RTT_SR_RTTINC) {  }
+
+	/* IRQ due to Alarm */
+	if ((ul_status & RTT_SR_ALMS) == RTT_SR_ALMS) {
+		//pin_toggle(LED_PIO, LED_IDX_MASK);    // BLINK Led
+		f_rtt_alarme = true;                  // flag RTT alarme
+	}
+}
+
+static float get_time_rtt(){
+	uint ul_previous_time = rtt_read_timer_value(RTT);
+}
+
+static void RTT_init(uint16_t pllPreScale, uint32_t IrqNPulses)
+{
+	uint32_t ul_previous_time;
+
+	/* Configure RTT for a 1 second tick interrupt */
+	rtt_sel_source(RTT, false);
+	rtt_init(RTT, pllPreScale);
+	
+	ul_previous_time = rtt_read_timer_value(RTT);
+	while (ul_previous_time == rtt_read_timer_value(RTT));
+	
+	rtt_write_alarm_time(RTT, IrqNPulses+ul_previous_time);
+
+	/* Enable RTT interrupt */
+	NVIC_DisableIRQ(RTT_IRQn);
+	NVIC_ClearPendingIRQ(RTT_IRQn);
+	NVIC_SetPriority(RTT_IRQn, 0);
+	NVIC_EnableIRQ(RTT_IRQn);
+	rtt_enable_interrupt(RTT, RTT_MR_ALMIEN);
+}
+
+int calc_Vel(int N,double dT){
+	return 3.6*2*3.14*0.325*N/dT;
+}
+int calc_dist(int N){
+	return 2*3.14*0.325*N;
+}
+
+void clear_LCD(int a, int b){
+	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
+	ili9488_draw_filled_rectangle(0, a, ILI9488_LCD_WIDTH-1, b);
+	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
+}
+int main(void){
 	// array para escrita no LCD
 	uint8_t stingLCD[256];
 	
@@ -198,55 +203,70 @@ int main(void)
 	ioport_init();
 	init();
 	RTC_init();
-	/* Initialize the UART console. */
-	//configure_console();
-
     /* Inicializa e configura o LCD */
 	configure_lcd();
-
-    /* Escreve na tela Computacao Embarcada 2018 */
-	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
-	ili9488_draw_filled_rectangle(0, 300, ILI9488_LCD_WIDTH-1, 315);
-	ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
+	clear_LCD(300,316);
 	
-	sprintf(stingLCD, "Computacao Embarcada %d", 2019);
-	ili9488_draw_string(10, 300, stingLCD);
 	int x = 0;
+	int x_tot = 0;
+	Bool flag_time = true;
+	Bool flag_dist = false;
+	Bool flag_vel = false;
+	
+	rtc_get_time(RTC, &hour, &minu, &seg);
+	int t_time = seg;
+	int t_dist = seg;
+	int t_vel = seg;
+    f_rtt_alarme = true;
+
 	while (1) {
-		delay_s(1);
+		if(f_rtt_alarme){
+			 uint16_t pllPreScale = (int) (((float) 32768) / 1.0);
+			 uint32_t irqRTTvalue  = 4;
+			 
+			 // reinicia RTT para gerar um novo IRQ
+			 RTT_init(pllPreScale, irqRTTvalue);
+			 f_rtt_alarme = false;
+
+			 clear_LCD(125,170);
+			 sprintf(stingLCD,"Velocidade Media:%d km/h" , calc_Vel(x,4));
+			 ili9488_draw_string(10, 150, stingLCD);
+			 sprintf(stingLCD,"Distancia Percorrida:%d m" , calc_dist(x_tot));
+			 ili9488_draw_string(10, 125, stingLCD);
+			 x=0;
+		}
 		rtc_get_time(RTC, &hour, &minu, &seg);
 		
-		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
-		ili9488_draw_filled_rectangle(0, 300, ILI9488_LCD_WIDTH-1, 315);
-		ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
+		if(seg == (t_time+1)){
+			t_time = seg;
+			if(t_time==59){t_time=0;}
+ 			
+			clear_LCD(325,340);
+
+			sprintf(stingLCD, "Tempo Percorrido:%d :%d :%d", hour,minu,seg);
+			ili9488_draw_string(10, 325, stingLCD);
+		}
 		
-		sprintf(stingLCD, "Tempo Percorrido: %d : %d :%d", hour,minu,seg);
-		ili9488_draw_string(10, 300, stingLCD);
-		
-		//TC_init(TC0, ID_TC1, 1, 1);
-		
+		if(seg == (t_dist+4)){
+			t_dist,t_vel = seg;
+			if(t_dist>=56){t_dist,t_vel=0;}
+			
+		}
+				
 		if(but_stop){
-			ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
-			ili9488_draw_filled_rectangle(10, 200, ILI9488_LCD_WIDTH-1, 250);
-			ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
-			sprintf(stingLCD, "soma %d", 1201);
-			ili9488_draw_string(100, 200, stingLCD);
 			but_stop = false;
 		}
 		else if(but_p_freq){
-		
-			//TC_init(TC0, ID_TC1, 1, 2);
-
-			but_p_freq=false;
-			
+			but_p_freq=false;			
 		}
 		else if(but_m_freq){
 			x++;
-			ili9488_set_foreground_color(COLOR_CONVERT(COLOR_WHITE));
-			ili9488_draw_filled_rectangle(10, 200, ILI9488_LCD_WIDTH-1, 250);
-			ili9488_set_foreground_color(COLOR_CONVERT(COLOR_BLACK));
-			sprintf(stingLCD, "rotacoes %d", x);
+			x_tot+=x;
+			clear_LCD(200,230);
+			
+			sprintf(stingLCD, "Rotacoes %d", x_tot);
 			ili9488_draw_string(100, 200, stingLCD);
+			
 			but_m_freq = false;
 		}
 		
